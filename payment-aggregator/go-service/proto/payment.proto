@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package payment;
+
+option go_package = "github.com/yourname/payment-aggregator/go-service/pb";
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum Provider {
+    PROVIDER_UNKNOWN = 0;
+    PROVIDER_STRIPE = 1;
+    PROVIDER_RAZORPAY = 2;
+    PROVIDER_PAYPAL = 3;
+}
+
+enum PaymentStatus {
+    STATUS_UNKNOWN = 0;
+    STATUS_PENDING = 1;
+    STATUS_COMPLETED = 2;
+    STATUS_FAILED = 3;
+    STATUS_REFUNDED = 4;
+}
+
+// ============================================
+// MESSAGES
+// ============================================
+
+// Core payment message
+message Payment {
+    string id = 1;
+    Provider provider = 2;
+    double amount = 3;
+    string currency = 4;
+    PaymentStatus status = 5;
+    string customer_email = 6;
+    int64 created_at = 7;       // Unix timestamp
+    int64 processed_at = 8;     // Unix timestamp
+    map<string, string> metadata = 9;  // Flexible key-value pairs
+}
+
+// Request/Response messages
+message GetPaymentRequest {
+    string payment_id = 1;
+}
+
+message ListPaymentsRequest {
+    Provider provider = 1;           // Filter by provider (optional)
+    PaymentStatus status = 2;        // Filter by status (optional)
+    int32 limit = 3;                 // Max results (default: 10)
+    string cursor = 4;               // For pagination
+}
+
+message PaymentList {
+    repeated Payment payments = 1;
+    string next_cursor = 2;
+    int32 total_count = 3;
+}
+
+// Streaming response for real-time updates
+message PaymentEvent {
+    Payment payment = 1;
+    string event_type = 2;           // "created", "updated", "completed"
+}
+
+// ============================================
+// SERVICE
+// ============================================
+
+service PaymentService {
+    // Unary RPC - single request, single response
+    rpc GetPayment(GetPaymentRequest) returns (Payment);
+    
+    // Unary RPC - request with filters, returns list
+    rpc ListPayments(ListPaymentsRequest) returns (PaymentList);
+    
+    // Server streaming - client subscribes, server pushes updates
+    rpc StreamPayments(ListPaymentsRequest) returns (stream PaymentEvent);
+}
