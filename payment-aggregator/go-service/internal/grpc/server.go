@@ -20,21 +20,41 @@ type PaymentServer struct {
 	// In-memory storage (later: fed by Kafka)
 	mu       sync.RWMutex
 	payments map[string]*pb.Payment
+
+	// Real-time streaming subscribers
+	subscribersMu sync.RWMutex
+	subscribers   map[chan *pb.PaymentEvent]struct{}
 }
 
 // NewPaymentServer creates a new server instance
 func NewPaymentServer() *PaymentServer {
 	return &PaymentServer{
-		payments: make(map[string]*pb.Payment),
+		payments:    make(map[string]*pb.Payment),
+		subscribers: make(map[chan *pb.PaymentEvent]struct{}),
 	}
 }
 
 // AddPayment adds a payment to storage (called by Kafka consumer later)
 func (s *PaymentServer) AddPayment(p *pb.Payment) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.payments[p.Id] = p
-	log.Printf("[STORE] Added payment: %s", p.Id)
+	s.mu.Unlock()
+
+	// Broadcast to ALL connected Node.js clients!
+	event := &pb.PaymentEvent{Payment: p, EventType: "new"}
+	s.broadcast(event)
+}
+
+func (s *PaymentServer) broadcast(event *pb.PaymentEvent) {
+	s.subscribersMu.RLock()
+	defer s.subscribersMu.RUnlock()
+
+	for ch := range s.subscribers {
+		select {
+		case ch <- event:  // Send to subscriber
+		default:           // Skip if slow
+		}
+	}
 }
 
 // ============================================
@@ -108,42 +128,49 @@ func (s *PaymentServer) ListPayments(
 }
 
 // StreamPayments sends real-time payment events to client
-func (s *PaymentServer) StreamPayments(
-	req *pb.ListPaymentsRequest,
-	stream pb.PaymentService_StreamPaymentsServer,
-) error {
-	log.Printf("[RPC] StreamPayments started: provider=%v", req.Provider)
+// StreamPayments - Node.js calls this to receive real-time updates
+func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.PaymentService_StreamPaymentsServer) error {
+	log.Printf("[RPC] StreamPayments called")
 
-	// For now, send existing payments as events
-	// Later: this will be connected to Kafka consumer
+	ch := s.subscribe()
+	defer s.unsubscribe(ch)
+
+	// Send existing payments first
 	s.mu.RLock()
-	payments := make([]*pb.Payment, 0, len(s.payments))
 	for _, p := range s.payments {
-		payments = append(payments, p)
+		if err := stream.Send(&pb.PaymentEvent{Payment: p, EventType: "existing"}); err != nil {
+			s.mu.RUnlock()
+			return err
+		}
 	}
 	s.mu.RUnlock()
 
-	for _, p := range payments {
-		// Apply filter
-		if req.Provider != pb.Provider_PROVIDER_UNKNOWN && p.Provider != req.Provider {
-			continue
-		}
-
-		event := &pb.PaymentEvent{
-			Payment:   p,
-			EventType: "existing",
-		}
-
+	// Then wait for NEW payments (one at a time!)
+	for event := range ch {
 		if err := stream.Send(event); err != nil {
-			return status.Errorf(codes.Internal, "failed to send: %v", err)
+			return err
 		}
-
-		// Small delay to simulate real-time
-		time.Sleep(100 * time.Millisecond)
 	}
-
-	log.Printf("[RPC] StreamPayments completed")
 	return nil
+}
+
+// subscribe adds a new subscriber channel
+func (s *PaymentServer) subscribe() chan *pb.PaymentEvent {
+	ch := make(chan *pb.PaymentEvent, 10)
+	s.subscribersMu.Lock()
+	s.subscribers[ch] = struct{}{}
+	s.subscribersMu.Unlock()
+	log.Printf("[STREAM] New subscriber (total: %d)", len(s.subscribers))
+	return ch
+}
+
+// unsubscribe removes a subscriber channel
+func (s *PaymentServer) unsubscribe(ch chan *pb.PaymentEvent) {
+	s.subscribersMu.Lock()
+	delete(s.subscribers, ch)
+	close(ch)
+	s.subscribersMu.Unlock()
+	log.Printf("[STREAM] Subscriber disconnected (total: %d)", len(s.subscribers))
 }
 
 // ============================================
