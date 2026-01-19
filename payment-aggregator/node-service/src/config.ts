@@ -11,6 +11,9 @@ export const config = {
       return `${this.host}:${this.port}`;
     },
   },
+  kafka: {
+    topic: process.env.KAFKA_TOPIC || 'poc.kafka.go.side.car',
+  },
   proto: {
     path: path.join(__dirname, '../proto/payment.proto'),
   },

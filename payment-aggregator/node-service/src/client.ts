@@ -62,12 +62,13 @@ export class PaymentClient {
   }
 
   /**
-   * Stream payments with automatic reconnection
+   * Stream payments from a specific Kafka topic with automatic reconnection
    */
   streamPaymentsWithReconnect(
+    topic: string,
     onPayment: (event: PaymentEvent) => void,
     onError?: (err: Error) => void,
-    options: { provider?: number; maxRetries?: number; retryDelayMs?: number } = {}
+    options: { provider?: number; status?: number; maxRetries?: number; retryDelayMs?: number } = {}
   ): void {
     const maxRetries = options.maxRetries ?? 10;
     const retryDelayMs = options.retryDelayMs ?? 3000;
@@ -78,14 +79,14 @@ export class PaymentClient {
 
     const attemptReconnect = () => {
       if (retryCount >= maxRetries) {
-        console.error('❌ Max retries exceeded');
+        console.error('Max retries exceeded');
         this.onErrorCallback?.(new Error('Max retries exceeded'));
         return;
       }
 
       retryCount++;
       this.reconnecting = true;
-      console.log(`🔄 Reconnecting in ${retryDelayMs/1000}s (attempt ${retryCount}/${maxRetries})...`);
+      console.log(`Reconnecting in ${retryDelayMs/1000}s (attempt ${retryCount}/${maxRetries})...`);
 
       setTimeout(async () => {
         this.reconnecting = false;
@@ -95,8 +96,7 @@ export class PaymentClient {
           await this.connect();
           startStream();
         } catch (e: any) {
-          console.error('❌ Reconnection failed:', e.message);
-          // Keep trying until max retries
+          console.error('Reconnection failed:', e.message);
           attemptReconnect();
         }
       }, retryDelayMs);
@@ -105,10 +105,12 @@ export class PaymentClient {
     const startStream = () => {
       if (this.reconnecting) return;
 
+      console.log(`Subscribing to topic: ${topic}`);
+
       this.stream = this.client.streamPayments({
+        topic: topic,
         provider: options.provider || 0,
-        status: 0,
-        limit: 0,
+        status: options.status || 0,
       });
 
       this.stream!.on('data', (event: PaymentEvent) => {
@@ -124,7 +126,7 @@ export class PaymentClient {
           return;
         }
 
-        console.error(`\n❌ Stream error [${classified.name}]:`, classified.message);
+        console.error(`\nStream error [${classified.name}]:`, classified.message);
 
         // Attempt reconnection for recoverable errors
         if (classified.retryable ||
@@ -137,8 +139,7 @@ export class PaymentClient {
       });
 
       this.stream!.on('end', () => {
-        console.log('📪 Stream ended by server');
-        // Server closed stream - try to reconnect
+        console.log('Stream ended by server');
         if (!this.reconnecting) {
           attemptReconnect();
         }

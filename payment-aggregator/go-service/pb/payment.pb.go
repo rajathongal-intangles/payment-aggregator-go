@@ -410,18 +410,80 @@ func (x *PaymentList) GetTotalCount() int32 {
 	return 0
 }
 
+// Stream subscription request - client specifies which topic to consume
+type StreamRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topic         string                 `protobuf:"bytes,1,opt,name=topic,proto3" json:"topic,omitempty"`                               // Kafka topic to subscribe to (required)
+	Provider      Provider               `protobuf:"varint,2,opt,name=provider,proto3,enum=payment.Provider" json:"provider,omitempty"`  // Filter by provider (optional)
+	Status        PaymentStatus          `protobuf:"varint,3,opt,name=status,proto3,enum=payment.PaymentStatus" json:"status,omitempty"` // Filter by status (optional)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamRequest) Reset() {
+	*x = StreamRequest{}
+	mi := &file_payment_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamRequest) ProtoMessage() {}
+
+func (x *StreamRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_payment_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
+func (*StreamRequest) Descriptor() ([]byte, []int) {
+	return file_payment_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *StreamRequest) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+func (x *StreamRequest) GetProvider() Provider {
+	if x != nil {
+		return x.Provider
+	}
+	return Provider_PROVIDER_UNKNOWN
+}
+
+func (x *StreamRequest) GetStatus() PaymentStatus {
+	if x != nil {
+		return x.Status
+	}
+	return PaymentStatus_STATUS_UNKNOWN
+}
+
 // Streaming response for real-time updates
 type PaymentEvent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Payment       *Payment               `protobuf:"bytes,1,opt,name=payment,proto3" json:"payment,omitempty"`
-	EventType     string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"` // "created", "updated", "completed"
+	EventType     string                 `protobuf:"bytes,2,opt,name=event_type,json=eventType,proto3" json:"event_type,omitempty"` // "existing", "new"
+	Topic         string                 `protobuf:"bytes,3,opt,name=topic,proto3" json:"topic,omitempty"`                          // Source Kafka topic
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PaymentEvent) Reset() {
 	*x = PaymentEvent{}
-	mi := &file_payment_proto_msgTypes[4]
+	mi := &file_payment_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -433,7 +495,7 @@ func (x *PaymentEvent) String() string {
 func (*PaymentEvent) ProtoMessage() {}
 
 func (x *PaymentEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_payment_proto_msgTypes[4]
+	mi := &file_payment_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -446,7 +508,7 @@ func (x *PaymentEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PaymentEvent.ProtoReflect.Descriptor instead.
 func (*PaymentEvent) Descriptor() ([]byte, []int) {
-	return file_payment_proto_rawDescGZIP(), []int{4}
+	return file_payment_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *PaymentEvent) GetPayment() *Payment {
@@ -461,6 +523,103 @@ func (x *PaymentEvent) GetEventType() string {
 		return x.EventType
 	}
 	return ""
+}
+
+func (x *PaymentEvent) GetTopic() string {
+	if x != nil {
+		return x.Topic
+	}
+	return ""
+}
+
+// Request for available topics
+type GetTopicsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetTopicsRequest) Reset() {
+	*x = GetTopicsRequest{}
+	mi := &file_payment_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetTopicsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetTopicsRequest) ProtoMessage() {}
+
+func (x *GetTopicsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_payment_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetTopicsRequest.ProtoReflect.Descriptor instead.
+func (*GetTopicsRequest) Descriptor() ([]byte, []int) {
+	return file_payment_proto_rawDescGZIP(), []int{6}
+}
+
+// List of available topics
+type TopicList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Topics        []string               `protobuf:"bytes,1,rep,name=topics,proto3" json:"topics,omitempty"`
+	Count         int32                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TopicList) Reset() {
+	*x = TopicList{}
+	mi := &file_payment_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TopicList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TopicList) ProtoMessage() {}
+
+func (x *TopicList) ProtoReflect() protoreflect.Message {
+	mi := &file_payment_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TopicList.ProtoReflect.Descriptor instead.
+func (*TopicList) Descriptor() ([]byte, []int) {
+	return file_payment_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *TopicList) GetTopics() []string {
+	if x != nil {
+		return x.Topics
+	}
+	return nil
+}
+
+func (x *TopicList) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
 }
 
 var File_payment_proto protoreflect.FileDescriptor
@@ -495,11 +654,20 @@ const file_payment_proto_rawDesc = "" +
 	"\vnext_cursor\x18\x02 \x01(\tR\n" +
 	"nextCursor\x12\x1f\n" +
 	"\vtotal_count\x18\x03 \x01(\x05R\n" +
-	"totalCount\"Y\n" +
+	"totalCount\"\x84\x01\n" +
+	"\rStreamRequest\x12\x14\n" +
+	"\x05topic\x18\x01 \x01(\tR\x05topic\x12-\n" +
+	"\bprovider\x18\x02 \x01(\x0e2\x11.payment.ProviderR\bprovider\x12.\n" +
+	"\x06status\x18\x03 \x01(\x0e2\x16.payment.PaymentStatusR\x06status\"o\n" +
 	"\fPaymentEvent\x12*\n" +
 	"\apayment\x18\x01 \x01(\v2\x10.payment.PaymentR\apayment\x12\x1d\n" +
 	"\n" +
-	"event_type\x18\x02 \x01(\tR\teventType*a\n" +
+	"event_type\x18\x02 \x01(\tR\teventType\x12\x14\n" +
+	"\x05topic\x18\x03 \x01(\tR\x05topic\"\x12\n" +
+	"\x10GetTopicsRequest\"9\n" +
+	"\tTopicList\x12\x16\n" +
+	"\x06topics\x18\x01 \x03(\tR\x06topics\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x05R\x05count*a\n" +
 	"\bProvider\x12\x14\n" +
 	"\x10PROVIDER_UNKNOWN\x10\x00\x12\x13\n" +
 	"\x0fPROVIDER_STRIPE\x10\x01\x12\x15\n" +
@@ -510,12 +678,13 @@ const file_payment_proto_rawDesc = "" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x14\n" +
 	"\x10STATUS_COMPLETED\x10\x02\x12\x11\n" +
 	"\rSTATUS_FAILED\x10\x03\x12\x13\n" +
-	"\x0fSTATUS_REFUNDED\x10\x042\xd9\x01\n" +
+	"\x0fSTATUS_REFUNDED\x10\x042\x8f\x02\n" +
 	"\x0ePaymentService\x12:\n" +
 	"\n" +
 	"GetPayment\x12\x1a.payment.GetPaymentRequest\x1a\x10.payment.Payment\x12B\n" +
-	"\fListPayments\x12\x1c.payment.ListPaymentsRequest\x1a\x14.payment.PaymentList\x12G\n" +
-	"\x0eStreamPayments\x12\x1c.payment.ListPaymentsRequest\x1a\x15.payment.PaymentEvent0\x01BCZAgithub.com/rajathongal-intangles/payment-aggregator/go-service/pbb\x06proto3"
+	"\fListPayments\x12\x1c.payment.ListPaymentsRequest\x1a\x14.payment.PaymentList\x12A\n" +
+	"\x0eStreamPayments\x12\x16.payment.StreamRequest\x1a\x15.payment.PaymentEvent0\x01\x12:\n" +
+	"\tGetTopics\x12\x19.payment.GetTopicsRequest\x1a\x12.payment.TopicListBCZAgithub.com/rajathongal-intangles/payment-aggregator/go-service/pbb\x06proto3"
 
 var (
 	file_payment_proto_rawDescOnce sync.Once
@@ -530,7 +699,7 @@ func file_payment_proto_rawDescGZIP() []byte {
 }
 
 var file_payment_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_payment_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_payment_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_payment_proto_goTypes = []any{
 	(Provider)(0),               // 0: payment.Provider
 	(PaymentStatus)(0),          // 1: payment.PaymentStatus
@@ -538,28 +707,35 @@ var file_payment_proto_goTypes = []any{
 	(*GetPaymentRequest)(nil),   // 3: payment.GetPaymentRequest
 	(*ListPaymentsRequest)(nil), // 4: payment.ListPaymentsRequest
 	(*PaymentList)(nil),         // 5: payment.PaymentList
-	(*PaymentEvent)(nil),        // 6: payment.PaymentEvent
-	nil,                         // 7: payment.Payment.MetadataEntry
+	(*StreamRequest)(nil),       // 6: payment.StreamRequest
+	(*PaymentEvent)(nil),        // 7: payment.PaymentEvent
+	(*GetTopicsRequest)(nil),    // 8: payment.GetTopicsRequest
+	(*TopicList)(nil),           // 9: payment.TopicList
+	nil,                         // 10: payment.Payment.MetadataEntry
 }
 var file_payment_proto_depIdxs = []int32{
 	0,  // 0: payment.Payment.provider:type_name -> payment.Provider
 	1,  // 1: payment.Payment.status:type_name -> payment.PaymentStatus
-	7,  // 2: payment.Payment.metadata:type_name -> payment.Payment.MetadataEntry
+	10, // 2: payment.Payment.metadata:type_name -> payment.Payment.MetadataEntry
 	0,  // 3: payment.ListPaymentsRequest.provider:type_name -> payment.Provider
 	1,  // 4: payment.ListPaymentsRequest.status:type_name -> payment.PaymentStatus
 	2,  // 5: payment.PaymentList.payments:type_name -> payment.Payment
-	2,  // 6: payment.PaymentEvent.payment:type_name -> payment.Payment
-	3,  // 7: payment.PaymentService.GetPayment:input_type -> payment.GetPaymentRequest
-	4,  // 8: payment.PaymentService.ListPayments:input_type -> payment.ListPaymentsRequest
-	4,  // 9: payment.PaymentService.StreamPayments:input_type -> payment.ListPaymentsRequest
-	2,  // 10: payment.PaymentService.GetPayment:output_type -> payment.Payment
-	5,  // 11: payment.PaymentService.ListPayments:output_type -> payment.PaymentList
-	6,  // 12: payment.PaymentService.StreamPayments:output_type -> payment.PaymentEvent
-	10, // [10:13] is the sub-list for method output_type
-	7,  // [7:10] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 6: payment.StreamRequest.provider:type_name -> payment.Provider
+	1,  // 7: payment.StreamRequest.status:type_name -> payment.PaymentStatus
+	2,  // 8: payment.PaymentEvent.payment:type_name -> payment.Payment
+	3,  // 9: payment.PaymentService.GetPayment:input_type -> payment.GetPaymentRequest
+	4,  // 10: payment.PaymentService.ListPayments:input_type -> payment.ListPaymentsRequest
+	6,  // 11: payment.PaymentService.StreamPayments:input_type -> payment.StreamRequest
+	8,  // 12: payment.PaymentService.GetTopics:input_type -> payment.GetTopicsRequest
+	2,  // 13: payment.PaymentService.GetPayment:output_type -> payment.Payment
+	5,  // 14: payment.PaymentService.ListPayments:output_type -> payment.PaymentList
+	7,  // 15: payment.PaymentService.StreamPayments:output_type -> payment.PaymentEvent
+	9,  // 16: payment.PaymentService.GetTopics:output_type -> payment.TopicList
+	13, // [13:17] is the sub-list for method output_type
+	9,  // [9:13] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_payment_proto_init() }
@@ -573,7 +749,7 @@ func file_payment_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_payment_proto_rawDesc), len(file_payment_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

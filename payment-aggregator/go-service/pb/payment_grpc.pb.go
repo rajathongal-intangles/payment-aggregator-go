@@ -22,6 +22,7 @@ const (
 	PaymentService_GetPayment_FullMethodName     = "/payment.PaymentService/GetPayment"
 	PaymentService_ListPayments_FullMethodName   = "/payment.PaymentService/ListPayments"
 	PaymentService_StreamPayments_FullMethodName = "/payment.PaymentService/StreamPayments"
+	PaymentService_GetTopics_FullMethodName      = "/payment.PaymentService/GetTopics"
 )
 
 // PaymentServiceClient is the client API for PaymentService service.
@@ -32,8 +33,10 @@ type PaymentServiceClient interface {
 	GetPayment(ctx context.Context, in *GetPaymentRequest, opts ...grpc.CallOption) (*Payment, error)
 	// Unary RPC - request with filters, returns list
 	ListPayments(ctx context.Context, in *ListPaymentsRequest, opts ...grpc.CallOption) (*PaymentList, error)
-	// Server streaming - client subscribes, server pushes updates
-	StreamPayments(ctx context.Context, in *ListPaymentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PaymentEvent], error)
+	// Server streaming - client subscribes to a specific Kafka topic
+	StreamPayments(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PaymentEvent], error)
+	// Get list of available/active topics
+	GetTopics(ctx context.Context, in *GetTopicsRequest, opts ...grpc.CallOption) (*TopicList, error)
 }
 
 type paymentServiceClient struct {
@@ -64,13 +67,13 @@ func (c *paymentServiceClient) ListPayments(ctx context.Context, in *ListPayment
 	return out, nil
 }
 
-func (c *paymentServiceClient) StreamPayments(ctx context.Context, in *ListPaymentsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PaymentEvent], error) {
+func (c *paymentServiceClient) StreamPayments(ctx context.Context, in *StreamRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PaymentEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &PaymentService_ServiceDesc.Streams[0], PaymentService_StreamPayments_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[ListPaymentsRequest, PaymentEvent]{ClientStream: stream}
+	x := &grpc.GenericClientStream[StreamRequest, PaymentEvent]{ClientStream: stream}
 	if err := x.ClientStream.SendMsg(in); err != nil {
 		return nil, err
 	}
@@ -83,6 +86,16 @@ func (c *paymentServiceClient) StreamPayments(ctx context.Context, in *ListPayme
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PaymentService_StreamPaymentsClient = grpc.ServerStreamingClient[PaymentEvent]
 
+func (c *paymentServiceClient) GetTopics(ctx context.Context, in *GetTopicsRequest, opts ...grpc.CallOption) (*TopicList, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(TopicList)
+	err := c.cc.Invoke(ctx, PaymentService_GetTopics_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PaymentServiceServer is the server API for PaymentService service.
 // All implementations must embed UnimplementedPaymentServiceServer
 // for forward compatibility.
@@ -91,8 +104,10 @@ type PaymentServiceServer interface {
 	GetPayment(context.Context, *GetPaymentRequest) (*Payment, error)
 	// Unary RPC - request with filters, returns list
 	ListPayments(context.Context, *ListPaymentsRequest) (*PaymentList, error)
-	// Server streaming - client subscribes, server pushes updates
-	StreamPayments(*ListPaymentsRequest, grpc.ServerStreamingServer[PaymentEvent]) error
+	// Server streaming - client subscribes to a specific Kafka topic
+	StreamPayments(*StreamRequest, grpc.ServerStreamingServer[PaymentEvent]) error
+	// Get list of available/active topics
+	GetTopics(context.Context, *GetTopicsRequest) (*TopicList, error)
 	mustEmbedUnimplementedPaymentServiceServer()
 }
 
@@ -109,8 +124,11 @@ func (UnimplementedPaymentServiceServer) GetPayment(context.Context, *GetPayment
 func (UnimplementedPaymentServiceServer) ListPayments(context.Context, *ListPaymentsRequest) (*PaymentList, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListPayments not implemented")
 }
-func (UnimplementedPaymentServiceServer) StreamPayments(*ListPaymentsRequest, grpc.ServerStreamingServer[PaymentEvent]) error {
+func (UnimplementedPaymentServiceServer) StreamPayments(*StreamRequest, grpc.ServerStreamingServer[PaymentEvent]) error {
 	return status.Error(codes.Unimplemented, "method StreamPayments not implemented")
+}
+func (UnimplementedPaymentServiceServer) GetTopics(context.Context, *GetTopicsRequest) (*TopicList, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetTopics not implemented")
 }
 func (UnimplementedPaymentServiceServer) mustEmbedUnimplementedPaymentServiceServer() {}
 func (UnimplementedPaymentServiceServer) testEmbeddedByValue()                        {}
@@ -170,15 +188,33 @@ func _PaymentService_ListPayments_Handler(srv interface{}, ctx context.Context, 
 }
 
 func _PaymentService_StreamPayments_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(ListPaymentsRequest)
+	m := new(StreamRequest)
 	if err := stream.RecvMsg(m); err != nil {
 		return err
 	}
-	return srv.(PaymentServiceServer).StreamPayments(m, &grpc.GenericServerStream[ListPaymentsRequest, PaymentEvent]{ServerStream: stream})
+	return srv.(PaymentServiceServer).StreamPayments(m, &grpc.GenericServerStream[StreamRequest, PaymentEvent]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type PaymentService_StreamPaymentsServer = grpc.ServerStreamingServer[PaymentEvent]
+
+func _PaymentService_GetTopics_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetTopicsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PaymentServiceServer).GetTopics(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PaymentService_GetTopics_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PaymentServiceServer).GetTopics(ctx, req.(*GetTopicsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 // PaymentService_ServiceDesc is the grpc.ServiceDesc for PaymentService service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -194,6 +230,10 @@ var PaymentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPayments",
 			Handler:    _PaymentService_ListPayments_Handler,
+		},
+		{
+			MethodName: "GetTopics",
+			Handler:    _PaymentService_GetTopics_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

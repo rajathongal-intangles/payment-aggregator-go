@@ -58,10 +58,27 @@ message PaymentList {
     int32 total_count = 3;
 }
 
+// Stream subscription request - client specifies which topic to consume
+message StreamRequest {
+    string topic = 1;                // Kafka topic to subscribe to (required)
+    Provider provider = 2;           // Filter by provider (optional)
+    PaymentStatus status = 3;        // Filter by status (optional)
+}
+
 // Streaming response for real-time updates
 message PaymentEvent {
     Payment payment = 1;
-    string event_type = 2;           // "created", "updated", "completed"
+    string event_type = 2;           // "existing", "new"
+    string topic = 3;                // Source Kafka topic
+}
+
+// Request for available topics
+message GetTopicsRequest {}
+
+// List of available topics
+message TopicList {
+    repeated string topics = 1;
+    int32 count = 2;
 }
 
 // ============================================
@@ -71,10 +88,13 @@ message PaymentEvent {
 service PaymentService {
     // Unary RPC - single request, single response
     rpc GetPayment(GetPaymentRequest) returns (Payment);
-    
+
     // Unary RPC - request with filters, returns list
     rpc ListPayments(ListPaymentsRequest) returns (PaymentList);
-    
-    // Server streaming - client subscribes, server pushes updates
-    rpc StreamPayments(ListPaymentsRequest) returns (stream PaymentEvent);
+
+    // Server streaming - client subscribes to a specific Kafka topic
+    rpc StreamPayments(StreamRequest) returns (stream PaymentEvent);
+
+    // Get list of available/active topics
+    rpc GetTopics(GetTopicsRequest) returns (TopicList);
 }

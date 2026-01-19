@@ -10,11 +10,14 @@ let stats = {
 };
 
 async function main() {
+  const topic = process.argv[2] || config.kafka.topic;
+
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
 ║           PAYMENT gRPC CLIENT (Node.js)                       ║
 ╠═══════════════════════════════════════════════════════════════╣
-║  Connecting to: ${config.grpc.address.padEnd(43)}║
+║  Server: ${config.grpc.address.padEnd(52)}║
+║  Topic:  ${topic.padEnd(52)}║
 ║  Auto-reconnect: enabled                                      ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
@@ -24,11 +27,12 @@ async function main() {
   try {
     await client.connect();
 
-    console.log('\n📡 Subscribing to payment stream (with auto-reconnect)...\n');
+    console.log(`\nSubscribing to topic: ${topic}\n`);
     console.log('─'.repeat(65));
 
-    // Use reconnecting stream
+    // Use reconnecting stream with topic
     client.streamPaymentsWithReconnect(
+      topic,
       (event: PaymentEvent) => {
         stats.total++;
         if (event.eventType === 'new') stats.new++;
@@ -36,7 +40,7 @@ async function main() {
         logPaymentSimple(event);
       },
       (err: Error) => {
-        console.error('\n❌ Fatal error:', err.message);
+        console.error('\nFatal error:', err.message);
         printStats();
         process.exit(1);
       },

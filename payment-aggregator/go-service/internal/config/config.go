@@ -29,7 +29,7 @@ func Load() *Config {
 		KafkaSASLMechanism: getEnv("KAFKA_SASL_MECHANISM", "PLAIN"),
 		KafkaSASLUsername:  getEnv("KAFKA_SASL_USERNAME", ""),
 		KafkaSASLPassword:  getEnv("KAFKA_SASL_PASSWORD", ""),
-		KafkaTopic:         getEnv("KAFKA_TOPIC", "payments.raw"),
+		KafkaTopic:         getEnv("KAFKA_TOPIC", "poc.kafka.go.side.car"),
 		KafkaGroupID:       getEnv("KAFKA_GROUP_ID", "payment-service"),
 		SchemaRegistryURL:  getEnv("KAFKA_SCHEMA_REGISTRY_URL", ""),
 		SchemaRegistryAuth: getEnv("KAFKA_SCHEMA_REGISTRY_AUTH", ""),

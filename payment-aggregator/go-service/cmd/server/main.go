@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net"
@@ -46,33 +45,18 @@ func main() {
 	// Create gRPC server
 	grpcServer := grpc.NewServer()
 
-	// Create and register our payment server
-	paymentServer := grpcserver.NewPaymentServer()
+	// Create consumer manager for on-demand topic consumption
+	consumerManager := kafka.NewConsumerManager(cfg)
+
+	// Create and register our payment server with consumer manager
+	paymentServer := grpcserver.NewPaymentServer(consumerManager)
 	pb.RegisterPaymentServiceServer(grpcServer, paymentServer)
 
 	// Enable reflection (for grpcurl and debugging)
 	reflection.Register(grpcServer)
 
-	// Seed test data (remove in production)
-	paymentServer.SeedTestData()
-
-	// Start Kafka consumer in background
-	ctx, cancel := context.WithCancel(context.Background())
-	consumer, err := kafka.NewConsumer(cfg, func(p *pb.Payment) error {
-		// This handler is called for each Kafka message
-		return paymentServer.AddPayment(p)
-	})
-	if err != nil {
-		log.Printf("⚠️  Kafka consumer disabled: %v", err)
-	} else {
-		go func() {
-			log.Printf("[KAFKA] Starting consumer for topic: %s", cfg.KafkaTopic)
-			if err := consumer.Start(ctx); err != nil {
-				log.Printf("[KAFKA] Consumer error: %v", err)
-			}
-		}()
-		log.Printf("✅ Kafka consumer started (topic: %s)", cfg.KafkaTopic)
-	}
+	// Seed test data for default topic (remove in production)
+	paymentServer.SeedTestData(cfg.KafkaTopic)
 
 	// Graceful shutdown handling
 	go func() {
@@ -80,31 +64,28 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		<-sigCh
 
-		log.Println("\n⏳ Shutting down...")
+		log.Println("\nShutting down...")
 
-		// 1. Stop Kafka consumer
-		cancel()
-		if consumer != nil {
-			consumer.Close()
-		}
-
-		// 2. Close all gRPC streams (so GracefulStop doesn't hang)
+		// 1. Close all consumers and gRPC streams
 		paymentServer.Shutdown()
 
-		// 3. Stop gRPC server
+		// 2. Stop gRPC server
 		grpcServer.GracefulStop()
 	}()
 
 	// Start server
-	log.Printf("🚀 gRPC server listening on %s", addr)
-	log.Println("   Services: PaymentService")
-	log.Println("   Methods:  GetPayment, ListPayments, StreamPayments")
-	log.Printf("   Kafka:    %s -> %s", cfg.KafkaBrokers, cfg.KafkaTopic)
+	log.Printf("gRPC server listening on %s", addr)
+	log.Println("Services: PaymentService")
+	log.Println("Methods:  GetPayment, ListPayments, StreamPayments, GetTopics")
+	log.Printf("Kafka:    %s (consumers created on-demand)", cfg.KafkaBrokers)
+	log.Println("\nClients subscribe to topics via StreamPayments(topic)")
+	log.Println("Consumers are created when first client subscribes")
+	log.Println("Consumers are destroyed when last client disconnects")
 	log.Println("\nPress Ctrl+C to stop")
 
 	if err := grpcServer.Serve(listener); err != nil {
 		log.Fatalf("Failed to serve: %v", err)
 	}
 
-	log.Println("👋 Server stopped")
+	log.Println("Server stopped")
 }

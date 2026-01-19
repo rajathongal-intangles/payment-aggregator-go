@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	apperrors "github.com/rajathongal-intangles/payment-aggregator/go-service/internal/errors"
+	"github.com/rajathongal-intangles/payment-aggregator/go-service/internal/kafka"
 	pb "github.com/rajathongal-intangles/payment-aggregator/go-service/pb"
 )
 
@@ -18,25 +19,33 @@ import (
 type PaymentServer struct {
 	pb.UnimplementedPaymentServiceServer // Required embed
 
-	// In-memory storage (later: fed by Kafka)
+	// In-memory storage (fed by Kafka consumers)
 	mu       sync.RWMutex
-	payments map[string]*pb.Payment
+	payments map[string]*pb.Payment // key: "topic:payment_id"
 
-	// Real-time streaming subscribers
-	subscribersMu sync.RWMutex
-	subscribers   map[chan *pb.PaymentEvent]struct{}
+	// Consumer manager for on-demand topic consumption
+	consumerManager *kafka.ConsumerManager
 }
 
 // NewPaymentServer creates a new server instance
-func NewPaymentServer() *PaymentServer {
-	return &PaymentServer{
-		payments:    make(map[string]*pb.Payment),
-		subscribers: make(map[chan *pb.PaymentEvent]struct{}),
+func NewPaymentServer(manager *kafka.ConsumerManager) *PaymentServer {
+	s := &PaymentServer{
+		payments:        make(map[string]*pb.Payment),
+		consumerManager: manager,
 	}
+
+	// Set handler for received payments
+	if manager != nil {
+		manager.SetPaymentHandler(func(topic string, payment *pb.Payment) error {
+			return s.AddPayment(topic, payment)
+		})
+	}
+
+	return s
 }
 
-// AddPayment adds a payment to storage (called by Kafka consumer)
-func (s *PaymentServer) AddPayment(p *pb.Payment) error {
+// AddPayment adds a payment to storage (called by ConsumerManager)
+func (s *PaymentServer) AddPayment(topic string, p *pb.Payment) error {
 	if p == nil {
 		return apperrors.InvalidArgument("payment", "cannot be nil")
 	}
@@ -44,30 +53,14 @@ func (s *PaymentServer) AddPayment(p *pb.Payment) error {
 		return apperrors.InvalidArgument("payment.id", "cannot be empty")
 	}
 
+	// Store with topic prefix for uniqueness across topics
+	key := fmt.Sprintf("%s:%s", topic, p.Id)
 	s.mu.Lock()
-	s.payments[p.Id] = p
+	s.payments[key] = p
 	s.mu.Unlock()
 
-	log.Printf("[STORE] Added: %s", p.Id)
-
-	// Broadcast to ALL connected Node.js clients!
-	event := &pb.PaymentEvent{Payment: p, EventType: "new"}
-	s.broadcast(event)
-
+	log.Printf("[STORE] Added: %s (topic: %s)", p.Id, topic)
 	return nil
-}
-
-func (s *PaymentServer) broadcast(event *pb.PaymentEvent) {
-	s.subscribersMu.RLock()
-	defer s.subscribersMu.RUnlock()
-
-	for ch := range s.subscribers {
-		select {
-		case ch <- event: // Send to subscriber
-		default: // Skip if slow
-			log.Printf("[BROADCAST] Subscriber slow, skipping")
-		}
-	}
 }
 
 // ============================================
@@ -152,22 +145,50 @@ func (s *PaymentServer) ListPayments(
 	}, nil
 }
 
-// StreamPayments sends real-time payment events to client with error recovery
-func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.PaymentService_StreamPaymentsServer) error {
-	log.Printf("[RPC] StreamPayments started")
+// StreamPayments subscribes to a Kafka topic and streams events to the client
+func (s *PaymentServer) StreamPayments(req *pb.StreamRequest, stream pb.PaymentService_StreamPaymentsServer) error {
+	// Validate topic
+	if req.Topic == "" {
+		return status.Error(codes.InvalidArgument, "topic is required")
+	}
 
-	ch := s.subscribe()
-	defer s.unsubscribe(ch)
+	log.Printf("[RPC] StreamPayments started for topic: %s", req.Topic)
 
-	// Send existing payments first (with optional provider filter)
+	// Subscribe to topic via ConsumerManager
+	if s.consumerManager == nil {
+		return status.Error(codes.Internal, "consumer manager not initialized")
+	}
+
+	ch, err := s.consumerManager.Subscribe(req.Topic)
+	if err != nil {
+		log.Printf("[RPC] Failed to subscribe to %s: %v", req.Topic, err)
+		return status.Errorf(codes.Internal, "failed to subscribe: %v", err)
+	}
+	defer s.consumerManager.Unsubscribe(req.Topic, ch)
+
+	// Send existing payments for this topic first
 	s.mu.RLock()
-	for _, p := range s.payments {
+	for key, p := range s.payments {
+		// Only send payments from this topic
+		if !s.isPaymentFromTopic(key, req.Topic) {
+			continue
+		}
+
 		// Apply provider filter if specified
 		if req.Provider != pb.Provider_PROVIDER_UNKNOWN && p.Provider != req.Provider {
 			continue
 		}
 
-		event := &pb.PaymentEvent{Payment: p, EventType: "existing"}
+		// Apply status filter if specified
+		if req.Status != pb.PaymentStatus_STATUS_UNKNOWN && p.Status != req.Status {
+			continue
+		}
+
+		event := &pb.PaymentEvent{
+			Payment:   p,
+			EventType: "existing",
+			Topic:     req.Topic,
+		}
 		if err := stream.Send(event); err != nil {
 			s.mu.RUnlock()
 			log.Printf("[RPC] StreamPayments send error: %v", err)
@@ -182,7 +203,7 @@ func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.Pa
 		case <-stream.Context().Done():
 			err := stream.Context().Err()
 			if err == context.Canceled {
-				log.Println("[RPC] StreamPayments: client disconnected")
+				log.Printf("[RPC] StreamPayments: client disconnected from %s", req.Topic)
 				return nil
 			}
 			if err == context.DeadlineExceeded {
@@ -192,13 +213,19 @@ func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.Pa
 
 		case event, ok := <-ch:
 			if !ok {
-				// Channel closed (server shutting down)
+				// Channel closed (consumer stopped or server shutting down)
 				return status.Error(codes.Unavailable, "stream closed")
 			}
 
 			// Apply provider filter if specified
 			if req.Provider != pb.Provider_PROVIDER_UNKNOWN &&
 				event.Payment.Provider != req.Provider {
+				continue
+			}
+
+			// Apply status filter if specified
+			if req.Status != pb.PaymentStatus_STATUS_UNKNOWN &&
+				event.Payment.Status != req.Status {
 				continue
 			}
 
@@ -210,50 +237,37 @@ func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.Pa
 	}
 }
 
-// subscribe adds a new subscriber channel
-func (s *PaymentServer) subscribe() chan *pb.PaymentEvent {
-	ch := make(chan *pb.PaymentEvent, 10)
-	s.subscribersMu.Lock()
-	s.subscribers[ch] = struct{}{}
-	s.subscribersMu.Unlock()
-	log.Printf("[SUBSCRIBE] New subscriber (total: %d)", len(s.subscribers))
-	return ch
+// isPaymentFromTopic checks if a payment key belongs to a topic
+func (s *PaymentServer) isPaymentFromTopic(key, topic string) bool {
+	return len(key) > len(topic)+1 && key[:len(topic)+1] == topic+":"
 }
 
-// unsubscribe removes a subscriber channel
-func (s *PaymentServer) unsubscribe(ch chan *pb.PaymentEvent) {
-	s.subscribersMu.Lock()
-	defer s.subscribersMu.Unlock()
-
-	// Only close if still in map (not already closed by Shutdown)
-	if _, exists := s.subscribers[ch]; exists {
-		delete(s.subscribers, ch)
-		close(ch)
-		log.Printf("[UNSUBSCRIBE] Subscriber left (total: %d)", len(s.subscribers))
+// GetTopics returns list of active topics with consumers
+func (s *PaymentServer) GetTopics(ctx context.Context, req *pb.GetTopicsRequest) (*pb.TopicList, error) {
+	if s.consumerManager == nil {
+		return &pb.TopicList{Topics: []string{}, Count: 0}, nil
 	}
+
+	topics := s.consumerManager.GetActiveTopics()
+	return &pb.TopicList{
+		Topics: topics,
+		Count:  int32(len(topics)),
+	}, nil
 }
 
-// Shutdown gracefully closes all subscriber streams
+// Shutdown gracefully closes all consumers and streams
 func (s *PaymentServer) Shutdown() {
-	s.subscribersMu.Lock()
-	defer s.subscribersMu.Unlock()
-
-	log.Printf("[SERVER] Closing %d subscriber streams...", len(s.subscribers))
-
-	for ch := range s.subscribers {
-		close(ch)
+	if s.consumerManager != nil {
+		s.consumerManager.Shutdown()
 	}
-	// Clear the map
-	s.subscribers = make(map[chan *pb.PaymentEvent]struct{})
-
-	log.Println("[SERVER] All streams closed")
+	log.Println("[SERVER] Shutdown complete")
 }
 
 // ============================================
 // Helper: Seed with test data
 // ============================================
 
-func (s *PaymentServer) SeedTestData() {
+func (s *PaymentServer) SeedTestData(topic string) {
 	testPayments := []*pb.Payment{
 		{
 			Id:            "pay_001",
@@ -290,8 +304,8 @@ func (s *PaymentServer) SeedTestData() {
 	}
 
 	for _, p := range testPayments {
-		s.AddPayment(p)
+		s.AddPayment(topic, p)
 	}
 
-	fmt.Printf("✅ Seeded %d test payments\n", len(testPayments))
+	fmt.Printf("Seeded %d test payments for topic: %s\n", len(testPayments), topic)
 }

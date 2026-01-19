@@ -37,12 +37,27 @@ func (r *RawPayment) ToProto() *pb.Payment {
 	}
 }
 
-// ParseMessage parses JSON bytes into RawPayment
+// ParseMessage parses JSON bytes into RawPayment with validation
 func ParseMessage(data []byte) (*RawPayment, error) {
 	var raw RawPayment
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
+
+	// Validate required fields
+	if raw.ID == "" {
+		return nil, fmt.Errorf("missing required field: id")
+	}
+	if raw.Provider == "" {
+		return nil, fmt.Errorf("missing required field: provider")
+	}
+	if raw.Amount <= 0 {
+		return nil, fmt.Errorf("invalid amount: must be positive")
+	}
+	if raw.Currency == "" {
+		return nil, fmt.Errorf("missing required field: currency")
+	}
+
 	return &raw, nil
 }
 

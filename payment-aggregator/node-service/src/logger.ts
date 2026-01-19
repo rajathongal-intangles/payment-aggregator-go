@@ -17,6 +17,7 @@ export interface Payment {
 export interface PaymentEvent {
   payment: Payment;
   eventType: string;
+  topic: string;
 }
 
 // Provider enum mapping
@@ -80,13 +81,13 @@ export function processPayment(event: PaymentEvent): void {
 
 // Simple one-line log format
 export function logPaymentSimple(event: PaymentEvent): void {
-  const { payment, eventType } = event;
+  const { payment, eventType, topic } = event;
   const provider = PROVIDERS[payment.provider as unknown as number] || payment.provider;
   const status = STATUSES[payment.status as unknown as number] || payment.status;
-  
+
   const icon = eventType === 'new' ? '🆕' : '📦';
-  
+
   console.log(
-    `${icon} [${new Date().toISOString()}] ${payment.id} | ${provider} | ${formatAmount(payment.amount, payment.currency)} ${payment.currency} | ${status}`
+    `${icon} [${topic}] ${payment.id} | ${provider} | ${formatAmount(payment.amount, payment.currency)} ${payment.currency} | ${status}`
   );
 }
