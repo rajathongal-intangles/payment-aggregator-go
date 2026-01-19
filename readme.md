@@ -6,6 +6,13 @@
 Go Producer → Kafka (Confluent) → Go Consumer/gRPC Server → Node.js Client
 ```
 
+## Why Go can handle 10-50+ topics in a single process:                                                                                                
+                                                                                                                                                      
+  1. Goroutines are lightweight - Each goroutine uses ~2KB stack (vs ~1MB for OS threads)                                                             
+  2. Go scheduler - Multiplexes thousands of goroutines across a few OS threads                                                                       
+  3. Non-blocking I/O - Kafka consumers use efficient polling, not blocking threads                                                                   
+  4. One consumer per topic = one goroutine - Trivial resource cost   
+
 ---
 
 ## 📚 Course Lessons
