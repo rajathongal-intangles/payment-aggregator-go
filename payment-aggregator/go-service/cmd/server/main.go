@@ -81,10 +81,17 @@ func main() {
 		<-sigCh
 
 		log.Println("\n⏳ Shutting down...")
-		cancel() // Stop Kafka consumer
+
+		// 1. Stop Kafka consumer
+		cancel()
 		if consumer != nil {
 			consumer.Close()
 		}
+
+		// 2. Close all gRPC streams (so GracefulStop doesn't hang)
+		paymentServer.Shutdown()
+
+		// 3. Stop gRPC server
 		grpcServer.GracefulStop()
 	}()
 

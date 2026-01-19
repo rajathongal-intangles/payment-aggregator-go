@@ -1,8 +1,7 @@
 import { PaymentClient } from './client';
-import { processPayment, logPaymentSimple, PaymentEvent } from './logger';
+import { logPaymentSimple, PaymentEvent } from './logger';
 import { config } from './config';
 
-// Track statistics
 let stats = {
   existing: 0,
   new: 0,
@@ -16,70 +15,52 @@ async function main() {
 ║           PAYMENT gRPC CLIENT (Node.js)                       ║
 ╠═══════════════════════════════════════════════════════════════╣
 ║  Connecting to: ${config.grpc.address.padEnd(43)}║
-║  Proto file:    ${config.proto.path.slice(-43).padEnd(43)}║
+║  Auto-reconnect: enabled                                      ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
 
   const client = new PaymentClient();
 
   try {
-    // Connect to server
     await client.connect();
 
-    // Subscribe to payment stream
-    console.log('\n📡 Subscribing to payment stream...\n');
+    console.log('\n📡 Subscribing to payment stream (with auto-reconnect)...\n');
     console.log('─'.repeat(65));
 
-    const stream = client.streamPayments(
-      // On each payment (one at a time!)
+    // Use reconnecting stream
+    client.streamPaymentsWithReconnect(
       (event: PaymentEvent) => {
         stats.total++;
-        
-        if (event.eventType === 'new') {
-          stats.new++;
-        } else {
-          stats.existing++;
-        }
-
-        // Use detailed or simple logging
-        // processPayment(event);  // Detailed box format
-        logPaymentSimple(event);   // One-line format
+        if (event.eventType === 'new') stats.new++;
+        else stats.existing++;
+        logPaymentSimple(event);
       },
-      
-      // On error
       (err: Error) => {
-        console.error('\n❌ Stream error:', err.message);
+        console.error('\n❌ Fatal error:', err.message);
         printStats();
         process.exit(1);
       },
-      
-      // On stream end
-      () => {
-        console.log('\n📪 Stream ended by server');
-        printStats();
+      {
+        maxRetries: 10,
+        retryDelayMs: 3000,
       }
     );
 
-    // Handle graceful shutdown
-    process.on('SIGINT', () => {
+    // Graceful shutdown
+    const shutdown = () => {
       console.log('\n\n⏳ Shutting down...');
-      stream.cancel();
       client.close();
       printStats();
       process.exit(0);
-    });
+    };
 
-    process.on('SIGTERM', () => {
-      stream.cancel();
-      client.close();
-      process.exit(0);
-    });
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
 
-    // Keep process running
     console.log('Waiting for payments... (Ctrl+C to stop)\n');
 
   } catch (err) {
-    console.error('❌ Failed to start client:', err);
+    console.error('❌ Failed to start:', err);
     process.exit(1);
   }
 }
@@ -97,5 +78,4 @@ function printStats() {
 └─────────────────────────────────────────────────────────────┘`);
 }
 
-// Run
 main();

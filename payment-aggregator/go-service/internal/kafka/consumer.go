@@ -60,10 +60,17 @@ func (c *Consumer) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("[CONSUMER] Context cancelled, stopping...")
 			return nil
 		default:
-			msg, err := c.consumer.ReadMessage(-1)
+			// Use 1 second timeout so we can check ctx.Done() periodically
+			msg, err := c.consumer.ReadMessage(1000)
 			if err != nil {
+				// Timeout is expected, just continue to check context
+				if err.(kafka.Error).Code() == kafka.ErrTimedOut {
+					continue
+				}
+				log.Printf("[CONSUMER] Read error: %v", err)
 				continue
 			}
 			c.processMessage(msg)

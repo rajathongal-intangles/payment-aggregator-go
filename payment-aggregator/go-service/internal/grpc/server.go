@@ -167,10 +167,30 @@ func (s *PaymentServer) subscribe() chan *pb.PaymentEvent {
 // unsubscribe removes a subscriber channel
 func (s *PaymentServer) unsubscribe(ch chan *pb.PaymentEvent) {
 	s.subscribersMu.Lock()
-	delete(s.subscribers, ch)
-	close(ch)
-	s.subscribersMu.Unlock()
-	log.Printf("[STREAM] Subscriber disconnected (total: %d)", len(s.subscribers))
+	defer s.subscribersMu.Unlock()
+
+	// Only close if still in map (not already closed by Shutdown)
+	if _, exists := s.subscribers[ch]; exists {
+		delete(s.subscribers, ch)
+		close(ch)
+		log.Printf("[STREAM] Subscriber disconnected (total: %d)", len(s.subscribers))
+	}
+}
+
+// Shutdown gracefully closes all subscriber streams
+func (s *PaymentServer) Shutdown() {
+	s.subscribersMu.Lock()
+	defer s.subscribersMu.Unlock()
+
+	log.Printf("[SERVER] Closing %d subscriber streams...", len(s.subscribers))
+
+	for ch := range s.subscribers {
+		close(ch)
+	}
+	// Clear the map
+	s.subscribers = make(map[chan *pb.PaymentEvent]struct{})
+
+	log.Println("[SERVER] All streams closed")
 }
 
 // ============================================
