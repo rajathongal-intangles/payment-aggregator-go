@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	apperrors "github.com/rajathongal-intangles/payment-aggregator/go-service/internal/errors"
 	pb "github.com/rajathongal-intangles/payment-aggregator/go-service/pb"
 )
 
@@ -34,15 +35,26 @@ func NewPaymentServer() *PaymentServer {
 	}
 }
 
-// AddPayment adds a payment to storage (called by Kafka consumer later)
-func (s *PaymentServer) AddPayment(p *pb.Payment) {
+// AddPayment adds a payment to storage (called by Kafka consumer)
+func (s *PaymentServer) AddPayment(p *pb.Payment) error {
+	if p == nil {
+		return apperrors.InvalidArgument("payment", "cannot be nil")
+	}
+	if p.Id == "" {
+		return apperrors.InvalidArgument("payment.id", "cannot be empty")
+	}
+
 	s.mu.Lock()
 	s.payments[p.Id] = p
 	s.mu.Unlock()
 
+	log.Printf("[STORE] Added: %s", p.Id)
+
 	// Broadcast to ALL connected Node.js clients!
 	event := &pb.PaymentEvent{Payment: p, EventType: "new"}
 	s.broadcast(event)
+
+	return nil
 }
 
 func (s *PaymentServer) broadcast(event *pb.PaymentEvent) {
@@ -51,8 +63,9 @@ func (s *PaymentServer) broadcast(event *pb.PaymentEvent) {
 
 	for ch := range s.subscribers {
 		select {
-		case ch <- event:  // Send to subscriber
-		default:           // Skip if slow
+		case ch <- event: // Send to subscriber
+		default: // Skip if slow
+			log.Printf("[BROADCAST] Subscriber slow, skipping")
 		}
 	}
 }
@@ -61,16 +74,25 @@ func (s *PaymentServer) broadcast(event *pb.PaymentEvent) {
 // gRPC Method Implementations
 // ============================================
 
-// GetPayment returns a single payment by ID
+// GetPayment returns a single payment by ID with proper error handling
 func (s *PaymentServer) GetPayment(
 	ctx context.Context,
 	req *pb.GetPaymentRequest,
 ) (*pb.Payment, error) {
-	log.Printf("[RPC] GetPayment called: %s", req.PaymentId)
+	log.Printf("[RPC] GetPayment: %s", req.PaymentId)
 
-	// Validate request
+	// Validate input
 	if req.PaymentId == "" {
-		return nil, status.Error(codes.InvalidArgument, "payment_id is required")
+		return nil, apperrors.InvalidArgument("payment_id", "cannot be empty").ToGRPCError()
+	}
+
+	// Check context deadline
+	if ctx.Err() == context.DeadlineExceeded {
+		return nil, status.Error(codes.DeadlineExceeded, "request timed out")
+	}
+
+	if ctx.Err() == context.Canceled {
+		return nil, status.Error(codes.Canceled, "request cancelled")
 	}
 
 	// Look up payment
@@ -79,28 +101,31 @@ func (s *PaymentServer) GetPayment(
 	s.mu.RUnlock()
 
 	if !exists {
-		return nil, status.Errorf(codes.NotFound, "payment not found: %s", req.PaymentId)
+		return nil, apperrors.NotFound("payment", req.PaymentId).ToGRPCError()
 	}
 
 	return payment, nil
 }
 
-// ListPayments returns filtered list of payments
+// ListPayments returns filtered list of payments with validation
 func (s *PaymentServer) ListPayments(
 	ctx context.Context,
 	req *pb.ListPaymentsRequest,
 ) (*pb.PaymentList, error) {
-	log.Printf("[RPC] ListPayments called: provider=%v, status=%v, limit=%d",
+	log.Printf("[RPC] ListPayments: provider=%v, status=%v, limit=%d",
 		req.Provider, req.Status, req.Limit)
+
+	// Validate limit
+	limit := int(req.Limit)
+	if limit < 0 {
+		return nil, apperrors.InvalidArgument("limit", "cannot be negative").ToGRPCError()
+	}
+	if limit == 0 || limit > 100 {
+		limit = 10
+	}
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
-	// Set default limit
-	limit := int(req.Limit)
-	if limit <= 0 || limit > 100 {
-		limit = 10
-	}
 
 	// Filter and collect payments
 	var result []*pb.Payment
@@ -127,31 +152,62 @@ func (s *PaymentServer) ListPayments(
 	}, nil
 }
 
-// StreamPayments sends real-time payment events to client
-// StreamPayments - Node.js calls this to receive real-time updates
+// StreamPayments sends real-time payment events to client with error recovery
 func (s *PaymentServer) StreamPayments(req *pb.ListPaymentsRequest, stream pb.PaymentService_StreamPaymentsServer) error {
-	log.Printf("[RPC] StreamPayments called")
+	log.Printf("[RPC] StreamPayments started")
 
 	ch := s.subscribe()
 	defer s.unsubscribe(ch)
 
-	// Send existing payments first
+	// Send existing payments first (with optional provider filter)
 	s.mu.RLock()
 	for _, p := range s.payments {
-		if err := stream.Send(&pb.PaymentEvent{Payment: p, EventType: "existing"}); err != nil {
+		// Apply provider filter if specified
+		if req.Provider != pb.Provider_PROVIDER_UNKNOWN && p.Provider != req.Provider {
+			continue
+		}
+
+		event := &pb.PaymentEvent{Payment: p, EventType: "existing"}
+		if err := stream.Send(event); err != nil {
 			s.mu.RUnlock()
-			return err
+			log.Printf("[RPC] StreamPayments send error: %v", err)
+			return status.Errorf(codes.Internal, "failed to send: %v", err)
 		}
 	}
 	s.mu.RUnlock()
 
-	// Then wait for NEW payments (one at a time!)
-	for event := range ch {
-		if err := stream.Send(event); err != nil {
-			return err
+	// Stream new payments with context awareness
+	for {
+		select {
+		case <-stream.Context().Done():
+			err := stream.Context().Err()
+			if err == context.Canceled {
+				log.Println("[RPC] StreamPayments: client disconnected")
+				return nil
+			}
+			if err == context.DeadlineExceeded {
+				return status.Error(codes.DeadlineExceeded, "stream deadline exceeded")
+			}
+			return nil
+
+		case event, ok := <-ch:
+			if !ok {
+				// Channel closed (server shutting down)
+				return status.Error(codes.Unavailable, "stream closed")
+			}
+
+			// Apply provider filter if specified
+			if req.Provider != pb.Provider_PROVIDER_UNKNOWN &&
+				event.Payment.Provider != req.Provider {
+				continue
+			}
+
+			if err := stream.Send(event); err != nil {
+				log.Printf("[RPC] StreamPayments send error: %v", err)
+				return status.Errorf(codes.Internal, "send failed: %v", err)
+			}
 		}
 	}
-	return nil
 }
 
 // subscribe adds a new subscriber channel
@@ -160,7 +216,7 @@ func (s *PaymentServer) subscribe() chan *pb.PaymentEvent {
 	s.subscribersMu.Lock()
 	s.subscribers[ch] = struct{}{}
 	s.subscribersMu.Unlock()
-	log.Printf("[STREAM] New subscriber (total: %d)", len(s.subscribers))
+	log.Printf("[SUBSCRIBE] New subscriber (total: %d)", len(s.subscribers))
 	return ch
 }
 
@@ -173,7 +229,7 @@ func (s *PaymentServer) unsubscribe(ch chan *pb.PaymentEvent) {
 	if _, exists := s.subscribers[ch]; exists {
 		delete(s.subscribers, ch)
 		close(ch)
-		log.Printf("[STREAM] Subscriber disconnected (total: %d)", len(s.subscribers))
+		log.Printf("[UNSUBSCRIBE] Subscriber left (total: %d)", len(s.subscribers))
 	}
 }
 

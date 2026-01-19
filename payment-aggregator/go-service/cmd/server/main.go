@@ -58,9 +58,9 @@ func main() {
 
 	// Start Kafka consumer in background
 	ctx, cancel := context.WithCancel(context.Background())
-	consumer, err := kafka.NewConsumer(cfg, func(p *pb.Payment) {
+	consumer, err := kafka.NewConsumer(cfg, func(p *pb.Payment) error {
 		// This handler is called for each Kafka message
-		paymentServer.AddPayment(p)
+		return paymentServer.AddPayment(p)
 	})
 	if err != nil {
 		log.Printf("⚠️  Kafka consumer disabled: %v", err)

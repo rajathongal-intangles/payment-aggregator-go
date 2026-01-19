@@ -27,21 +27,34 @@ case "$1" in
     ;;
   producer)
     COUNT=${2:-5}
+    INVALID=${3:-0}
     echo -e "${YELLOW}Sending ${COUNT} test payments...${NC}"
-    cd go-service && go run cmd/producer/main.go -count=$COUNT -interval=1s
+    if [ "$INVALID" -gt 0 ]; then
+      echo -e "${YELLOW}Also sending ${INVALID} invalid messages for DLQ testing...${NC}"
+    fi
+    cd go-service && go run cmd/producer/main.go -count=$COUNT -invalid=$INVALID -interval=1s
+    ;;
+  dlq-test)
+    echo -e "${YELLOW}Testing DLQ: Sending 2 valid + 3 invalid messages...${NC}"
+    cd go-service && go run cmd/producer/main.go -count=2 -invalid=3 -interval=500ms
     ;;
   *)
-    echo "Usage: $0 {setup|server|client|producer [count]}"
+    echo "Usage: $0 {setup|server|client|producer [count] [invalid]|dlq-test}"
     echo ""
     echo "Commands:"
-    echo "  setup     - Install dependencies and generate proto"
-    echo "  server    - Start Go gRPC server"
-    echo "  client    - Start Node.js streaming client"
-    echo "  producer  - Send test payments (default: 5)"
+    echo "  setup              - Install dependencies and generate proto"
+    echo "  server             - Start Go gRPC server"
+    echo "  client             - Start Node.js streaming client"
+    echo "  producer [n] [i]   - Send n valid + i invalid payments"
+    echo "  dlq-test           - Quick DLQ test (2 valid + 3 invalid)"
     echo ""
     echo "Quick start (run in separate terminals):"
     echo "  Terminal 1: ./run.sh server"
     echo "  Terminal 2: ./run.sh client"
     echo "  Terminal 3: ./run.sh producer 10"
+    echo ""
+    echo "DLQ testing:"
+    echo "  ./run.sh dlq-test              # Quick test"
+    echo "  ./run.sh producer 5 3          # 5 valid + 3 invalid"
     ;;
 esac

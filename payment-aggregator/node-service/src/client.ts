@@ -2,6 +2,10 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 import { config } from './config';
 import { PaymentEvent } from './logger';
+import { classifyError, withRetry } from './retry';
+
+// Re-export error utilities for external use
+export { classifyError, getErrorName } from './retry';
 
 const PROTO_OPTIONS: protoLoader.Options = {
   keepCase: false,
@@ -113,19 +117,19 @@ export class PaymentClient {
       });
 
       this.stream!.on('error', (err: Error) => {
-        const errCode = (err as any).code;
+        const classified = classifyError(err);
 
         // CANCELLED means intentional close
-        if (errCode === grpc.status.CANCELLED) {
+        if (classified.code === grpc.status.CANCELLED) {
           return;
         }
 
-        console.error(`\n❌ Stream error (code ${errCode}):`, err.message);
+        console.error(`\n❌ Stream error [${classified.name}]:`, classified.message);
 
         // Attempt reconnection for recoverable errors
-        if (errCode === grpc.status.UNAVAILABLE ||
-            errCode === grpc.status.UNKNOWN ||
-            errCode === grpc.status.INTERNAL) {
+        if (classified.retryable ||
+            classified.code === grpc.status.UNKNOWN ||
+            classified.code === grpc.status.INTERNAL) {
           attemptReconnect();
         } else {
           this.onErrorCallback?.(err);
@@ -145,29 +149,43 @@ export class PaymentClient {
   }
 
   /**
-   * Get a single payment by ID
+   * Get a single payment by ID (with retry)
    */
   async getPayment(paymentId: string): Promise<any> {
-    return new Promise((resolve, reject) => {
-      this.client.getPayment({ paymentId }, (err: Error, response: any) => {
-        if (err) reject(err);
-        else resolve(response);
+    return withRetry(() => {
+      return new Promise((resolve, reject) => {
+        this.client.getPayment({ paymentId }, (err: Error, response: any) => {
+          if (err) {
+            const classified = classifyError(err);
+            console.log(`[getPayment] Error: ${classified.name} - ${classified.message}`);
+            reject(err);
+          } else {
+            resolve(response);
+          }
+        });
       });
     });
   }
 
   /**
-   * List payments
+   * List payments (with retry)
    */
   async listPayments(options: { provider?: number; status?: number; limit?: number } = {}): Promise<any> {
-    return new Promise((resolve, reject) => {
-      this.client.listPayments(
-        { provider: options.provider || 0, status: options.status || 0, limit: options.limit || 10 },
-        (err: Error, response: any) => {
-          if (err) reject(err);
-          else resolve(response);
-        }
-      );
+    return withRetry(() => {
+      return new Promise((resolve, reject) => {
+        this.client.listPayments(
+          { provider: options.provider || 0, status: options.status || 0, limit: options.limit || 10 },
+          (err: Error, response: any) => {
+            if (err) {
+              const classified = classifyError(err);
+              console.log(`[listPayments] Error: ${classified.name} - ${classified.message}`);
+              reject(err);
+            } else {
+              resolve(response);
+            }
+          }
+        );
+      });
     });
   }
 

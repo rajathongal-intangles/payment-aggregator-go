@@ -1,4 +1,4 @@
-.PHONY: proto go-deps node-deps server producer client all clean
+.PHONY: proto go-deps node-deps server producer dlq-test client all clean
 
 # Proto generation
 proto:
@@ -23,6 +23,10 @@ server:
 # Run producer
 producer:
 	cd go-service && go run cmd/producer/main.go -count=10 -interval=1s
+
+# Run producer with invalid messages (DLQ test)
+dlq-test:
+	cd go-service && go run cmd/producer/main.go -count=2 -invalid=3 -interval=500ms
 
 # Start Node.js client
 client:
